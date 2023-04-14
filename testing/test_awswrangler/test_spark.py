@@ -18,10 +18,10 @@ logging.getLogger("awswrangler").setLevel(logging.DEBUG)
 @pytest.fixture(scope="module")
 def cloudformation_outputs():
     response = boto3.client("cloudformation").describe_stacks(StackName="aws-data-wrangler-test-arena")
-    outputs = {}
-    for output in response.get("Stacks")[0].get("Outputs"):
-        outputs[output.get("OutputKey")] = output.get("OutputValue")
-    yield outputs
+    yield {
+        output.get("OutputKey"): output.get("OutputValue")
+        for output in response.get("Stacks")[0].get("Outputs")
+    }
 
 
 @pytest.fixture(scope="module")
@@ -31,11 +31,10 @@ def session():
 
 @pytest.fixture(scope="module")
 def bucket(session, cloudformation_outputs):
-    if "BucketName" in cloudformation_outputs:
-        bucket = cloudformation_outputs.get("BucketName")
-        session.s3.delete_objects(path=f"s3://{bucket}/")
-    else:
+    if "BucketName" not in cloudformation_outputs:
         raise Exception("You must deploy the test infrastructure using SAM!")
+    bucket = cloudformation_outputs.get("BucketName")
+    session.s3.delete_objects(path=f"s3://{bucket}/")
     yield bucket
     session.s3.delete_objects(path=f"s3://{bucket}/")
 

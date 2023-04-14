@@ -24,9 +24,10 @@ class Glue:
         """
         response = self._client_glue.get_table(DatabaseName=database, Name=table)
         logger.debug(f"get_table response:\n{response}")
-        dtypes = {}
-        for col in response["Table"]["StorageDescriptor"]["Columns"]:
-            dtypes[col["Name"]] = col["Type"]
+        dtypes = {
+            col["Name"]: col["Type"]
+            for col in response["Table"]["StorageDescriptor"]["Columns"]
+        }
         for par in response["Table"]["PartitionKeys"]:
             dtypes[par["Name"]] = par["Type"]
         return dtypes
@@ -123,7 +124,7 @@ class Glue:
     def add_partitions(self, database, table, partition_paths, file_format, compression, extra_args=None):
         if not partition_paths:
             return None
-        partitions = list()
+        partitions = []
         for partition in partition_paths:
             if file_format == "parquet":
                 partition_def = Glue.parquet_partition_definition(partition=partition, compression=compression)
@@ -142,10 +143,13 @@ class Glue:
                                                            TableName=table,
                                                            PartitionInputList=page)
             for error in res["Errors"]:
-                if "ErrorDetail" in error:
-                    if "ErrorCode" in error["ErrorDetail"]:
-                        if error["ErrorDetail"]["ErrorCode"] != "AlreadyExistsException":
-                            raise ApiError(f"{error}")
+                if (
+                    "ErrorDetail" in error
+                    and "ErrorCode" in error["ErrorDetail"]
+                    and error["ErrorDetail"]["ErrorCode"]
+                    != "AlreadyExistsException"
+                ):
+                    raise ApiError(f"{error}")
 
     def get_connection_details(self, name):
         return self._client_glue.get_connection(Name=name, HidePassword=False)["Connection"]
@@ -202,7 +206,7 @@ class Glue:
             extra_args = {}
         if partition_cols_schema is None:
             partition_cols_schema = []
-        compressed = False if compression is None else True
+        compressed = compression is not None
         sep = extra_args["sep"] if "sep" in extra_args else ","
         serde = extra_args.get("serde")
         if serde == "OpenCSVSerDe":
@@ -269,7 +273,7 @@ class Glue:
     def csv_partition_definition(partition, compression, extra_args=None):
         if extra_args is None:
             extra_args = {}
-        compressed = False if compression is None else True
+        compressed = compression is not None
         sep = extra_args["sep"] if "sep" in extra_args else ","
         serde = extra_args.get("serde")
         if serde == "OpenCSVSerDe":
@@ -302,7 +306,7 @@ class Glue:
     def parquet_table_definition(table, partition_cols_schema, schema, path, compression):
         if not partition_cols_schema:
             partition_cols_schema = []
-        compressed = False if compression is None else True
+        compressed = compression is not None
         return {
             "Name": table,
             "PartitionKeys": [{
@@ -344,7 +348,7 @@ class Glue:
 
     @staticmethod
     def parquet_partition_definition(partition, compression):
-        compressed = False if compression is None else True
+        compressed = compression is not None
         return {
             "StorageDescriptor": {
                 "InputFormat": "org.apache.hadoop.mapred.TextInputFormat",
@@ -371,4 +375,4 @@ class Glue:
 
     @staticmethod
     def _parse_partition_values(path, partition_cols):
-        return [re.search(f"/{col}=(.*?)/", path).group(1) for col in partition_cols]
+        return [re.search(f"/{col}=(.*?)/", path)[1] for col in partition_cols]

@@ -13,10 +13,10 @@ logging.getLogger("awswrangler").setLevel(logging.DEBUG)
 @pytest.fixture(scope="module")
 def cloudformation_outputs():
     response = boto3.client("cloudformation").describe_stacks(StackName="aws-data-wrangler-test-arena")
-    outputs = {}
-    for output in response.get("Stacks")[0].get("Outputs"):
-        outputs[output.get("OutputKey")] = output.get("OutputValue")
-    yield outputs
+    yield {
+        output.get("OutputKey"): output.get("OutputValue")
+        for output in response.get("Stacks")[0].get("Outputs")
+    }
 
 
 @pytest.fixture(scope="module")
@@ -26,19 +26,19 @@ def session():
 
 @pytest.fixture(scope="module")
 def bucket(session, cloudformation_outputs):
-    if "BucketName" in cloudformation_outputs:
-        bucket = cloudformation_outputs["BucketName"]
-        session.s3.delete_objects(path=f"s3://{bucket}/")
-    else:
+    if "BucketName" not in cloudformation_outputs:
         raise Exception("You must deploy the test infrastructure using Cloudformation!")
+    bucket = cloudformation_outputs["BucketName"]
+    session.s3.delete_objects(path=f"s3://{bucket}/")
     yield bucket
     session.s3.delete_objects(path=f"s3://{bucket}/")
 
 
 def test_cluster(session, bucket, cloudformation_outputs):
-    steps = []
-    for cmd in ['echo "Hello"', "ls -la"]:
-        steps.append(session.emr.build_step(name=cmd, command=cmd))
+    steps = [
+        session.emr.build_step(name=cmd, command=cmd)
+        for cmd in ['echo "Hello"', "ls -la"]
+    ]
     cluster_id = session.emr.create_cluster(cluster_name="wrangler_cluster",
                                             logging_s3_path=f"s3://{bucket}/emr-logs/",
                                             emr_release="emr-5.27.0",
@@ -142,8 +142,9 @@ def test_cluster_single_node(session, bucket, cloudformation_outputs):
     cluster_state = session.emr.get_cluster_state(cluster_id=cluster_id)
     print(f"cluster_state: {cluster_state}")
     assert cluster_state == "STARTING"
-    steps = []
-    for cmd in ['echo "Hello"', "ls -la"]:
-        steps.append(session.emr.build_step(name=cmd, command=cmd))
+    steps = [
+        session.emr.build_step(name=cmd, command=cmd)
+        for cmd in ['echo "Hello"', "ls -la"]
+    ]
     session.emr.submit_steps(cluster_id=cluster_id, steps=steps)
     session.emr.terminate_cluster(cluster_id=cluster_id)

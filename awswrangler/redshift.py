@@ -89,7 +89,7 @@ class Redshift:
                                       tcp_keepalive=tcp_keepalive,
                                       application_name=application_name,
                                       validation_timeout=validation_timeout)
-        if isinstance(type(port), str) or isinstance(type(port), float):
+        if isinstance(type(port), (str, float)):
             port = int(port)
         conn = pg8000.connect(database=database,
                               host=host,
@@ -113,8 +113,13 @@ class Redshift:
         port, database = props["JDBC_CONNECTION_URL"].split(":")[3].split("/")
         user = props["USERNAME"]
         password = props["PASSWORD"]
-        conn = self.generate_connection(database=database, host=host, port=int(port), user=user, password=password)
-        return conn
+        return self.generate_connection(
+            database=database,
+            host=host,
+            port=int(port),
+            user=user,
+            password=password,
+        )
 
     def write_load_manifest(self, manifest_path, objects_paths):
         objects_sizes = self._session.s3.get_objects_sizes(objects_paths=objects_paths)
@@ -235,7 +240,7 @@ class Redshift:
         :return: None
         """
         sql = f"-- AWS DATA WRANGLER\n" \
-              f"DROP TABLE IF EXISTS {schema_name}.{table_name}"
+                  f"DROP TABLE IF EXISTS {schema_name}.{table_name}"
         logger.debug(f"Drop table query:\n{sql}")
         cursor.execute(sql)
         schema = Redshift._get_redshift_schema(
@@ -244,26 +249,16 @@ class Redshift:
             preserve_index=preserve_index,
             cast_columns=cast_columns,
         )
-        if diststyle:
-            diststyle = diststyle.upper()
-        else:
-            diststyle = "AUTO"
-        if sortstyle:
-            sortstyle = sortstyle.upper()
-        else:
-            sortstyle = "COMPOUND"
+        diststyle = diststyle.upper() if diststyle else "AUTO"
+        sortstyle = sortstyle.upper() if sortstyle else "COMPOUND"
         Redshift._validate_parameters(schema=schema,
                                       diststyle=diststyle,
                                       distkey=distkey,
                                       sortstyle=sortstyle,
                                       sortkey=sortkey)
         cols_str = "".join([f"{col[0]} {col[1]},\n" for col in schema])[:-2]
-        distkey_str = ""
-        if distkey and diststyle == "KEY":
-            distkey_str = f"\nDISTKEY({distkey})"
-        sortkey_str = ""
-        if sortkey:
-            sortkey_str = f"\n{sortstyle} SORTKEY({','.join(sortkey)})"
+        distkey_str = f"\nDISTKEY({distkey})" if distkey and diststyle == "KEY" else ""
+        sortkey_str = f"\n{sortstyle} SORTKEY({','.join(sortkey)})" if sortkey else ""
         sql = (f"-- AWS DATA WRANGLER\n"
                f"CREATE TABLE IF NOT EXISTS {schema_name}.{table_name} (\n"
                f"{cols_str}"

@@ -93,46 +93,50 @@ class Pandas:
         client_s3 = self._session.boto3_session.client(service_name="s3",
                                                        use_ssl=True,
                                                        config=self._session.botocore_config)
-        if max_result_size:
-            ret = Pandas._read_csv_iterator(client_s3=client_s3,
-                                            bucket_name=bucket_name,
-                                            key_path=key_path,
-                                            max_result_size=max_result_size,
-                                            header=header,
-                                            names=names,
-                                            usecols=usecols,
-                                            dtype=dtype,
-                                            sep=sep,
-                                            thousands=thousands,
-                                            decimal=decimal,
-                                            lineterminator=lineterminator,
-                                            quotechar=quotechar,
-                                            quoting=quoting,
-                                            escapechar=escapechar,
-                                            parse_dates=parse_dates,
-                                            infer_datetime_format=infer_datetime_format,
-                                            encoding=encoding,
-                                            converters=converters)
-        else:
-            ret = Pandas._read_csv_once(client_s3=client_s3,
-                                        bucket_name=bucket_name,
-                                        key_path=key_path,
-                                        header=header,
-                                        names=names,
-                                        usecols=usecols,
-                                        dtype=dtype,
-                                        sep=sep,
-                                        thousands=thousands,
-                                        decimal=decimal,
-                                        lineterminator=lineterminator,
-                                        quotechar=quotechar,
-                                        quoting=quoting,
-                                        escapechar=escapechar,
-                                        parse_dates=parse_dates,
-                                        infer_datetime_format=infer_datetime_format,
-                                        encoding=encoding,
-                                        converters=converters)
-        return ret
+        return (
+            Pandas._read_csv_iterator(
+                client_s3=client_s3,
+                bucket_name=bucket_name,
+                key_path=key_path,
+                max_result_size=max_result_size,
+                header=header,
+                names=names,
+                usecols=usecols,
+                dtype=dtype,
+                sep=sep,
+                thousands=thousands,
+                decimal=decimal,
+                lineterminator=lineterminator,
+                quotechar=quotechar,
+                quoting=quoting,
+                escapechar=escapechar,
+                parse_dates=parse_dates,
+                infer_datetime_format=infer_datetime_format,
+                encoding=encoding,
+                converters=converters,
+            )
+            if max_result_size
+            else Pandas._read_csv_once(
+                client_s3=client_s3,
+                bucket_name=bucket_name,
+                key_path=key_path,
+                header=header,
+                names=names,
+                usecols=usecols,
+                dtype=dtype,
+                sep=sep,
+                thousands=thousands,
+                decimal=decimal,
+                lineterminator=lineterminator,
+                quotechar=quotechar,
+                quoting=quoting,
+                escapechar=escapechar,
+                parse_dates=parse_dates,
+                infer_datetime_format=infer_datetime_format,
+                encoding=encoding,
+                converters=converters,
+            )
+        )
 
     @staticmethod
     def _read_csv_iterator(
@@ -211,36 +215,25 @@ class Pandas:
             bounders = calculate_bounders(num_items=total_size, max_size=max_result_size)
             logger.debug(f"bounders: {bounders}")
             bounders_len = len(bounders)
-            count = 0
             forgotten_bytes = 0
-            for ini, end in bounders:
-                count += 1
-
+            for count, (ini, end) in enumerate(bounders, start=1):
                 ini -= forgotten_bytes
                 end -= 1  # Range is inclusive, contrary from Python's List
-                bytes_range = "bytes={}-{}".format(ini, end)
+                bytes_range = f"bytes={ini}-{end}"
                 logger.debug(f"bytes_range: {bytes_range}")
                 body = client_s3.get_object(Bucket=bucket_name, Key=key_path, Range=bytes_range)["Body"].read()
                 chunk_size = len(body)
                 logger.debug(f"chunk_size (bytes): {chunk_size}")
 
-                if count == 1:  # first chunk
+                if count == 1 or count != bounders_len:  # first chunk
                     last_char = Pandas._find_terminator(body=body,
                                                         sep=sep,
                                                         quoting=quoting,
                                                         quotechar=quotechar,
                                                         lineterminator=lineterminator)
                     forgotten_bytes = len(body[last_char:])
-                elif count == bounders_len:  # Last chunk
+                else:  # Last chunk
                     last_char = chunk_size
-                else:
-                    last_char = Pandas._find_terminator(body=body,
-                                                        sep=sep,
-                                                        quoting=quoting,
-                                                        quotechar=quotechar,
-                                                        lineterminator=lineterminator)
-                    forgotten_bytes = len(body[last_char:])
-
                 df = pd.read_csv(StringIO(body[:last_char].decode("utf-8")),
                                  header=header,
                                  names=names,
@@ -290,9 +283,7 @@ class Pandas:
                     quote_counter += 1
                 elif b == sep_int:
                     sep_counter += 1
-                elif b == terminator_int:
-                    pass
-                else:
+                elif b != terminator_int:
                     first_non_special_byte_index = i
                     break
             if b == terminator_int:
@@ -429,7 +420,7 @@ class Pandas:
         col_type: str
         for col_name, col_type in cols_metadata.items():
             pandas_type: str = data_types.athena2pandas(dtype=col_type)
-            if pandas_type in ["datetime64", "date"]:
+            if pandas_type in {"datetime64", "date"}:
                 parse_timestamps.append(col_name)
                 if pandas_type == "date":
                     parse_dates.append(col_name)
@@ -473,13 +464,12 @@ class Pandas:
                                 converters=converters,
                                 quoting=csv.QUOTE_ALL,
                                 max_result_size=max_result_size)
-            if max_result_size is None:
-                if len(ret.index) > 0:
-                    for col in parse_dates:
-                        ret[col] = ret[col].dt.date
-                return ret
-            else:
+            if max_result_size is not None:
                 return Pandas._apply_dates_to_generator(generator=ret, parse_dates=parse_dates)
+            if len(ret.index) > 0:
+                for col in parse_dates:
+                    ret[col] = ret[col].dt.date
+            return ret
 
     @staticmethod
     def _apply_dates_to_generator(generator, parse_dates):
@@ -941,7 +931,7 @@ class Pandas:
             cast_columns = {}
             cast_columns_parquet: Dict = {}
         else:
-            cast_columns_tuples: List[Tuple[str, str]] = [(k, v) for k, v in cast_columns.items()]
+            cast_columns_tuples: List[Tuple[str, str]] = list(cast_columns.items())
             cast_columns_parquet = data_types.convert_schema(func=data_types.redshift2athena,
                                                              schema=cast_columns_tuples)
         if path[-1] != "/":
@@ -1025,7 +1015,7 @@ class Pandas:
 
     @staticmethod
     def drop_duplicated_columns(dataframe: pd.DataFrame, inplace: bool = True) -> pd.DataFrame:
-        if inplace is False:
+        if not inplace:
             dataframe = dataframe.copy(deep=True)
         duplicated_cols = dataframe.columns.duplicated()
         logger.warning(f"Dropping repeated columns: {list(dataframe.columns[duplicated_cols])}")

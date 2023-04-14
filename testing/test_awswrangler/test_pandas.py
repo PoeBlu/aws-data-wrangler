@@ -18,10 +18,10 @@ logging.getLogger("awswrangler").setLevel(logging.DEBUG)
 @pytest.fixture(scope="module")
 def cloudformation_outputs():
     response = boto3.client("cloudformation").describe_stacks(StackName="aws-data-wrangler-test-arena")
-    outputs = {}
-    for output in response.get("Stacks")[0].get("Outputs"):
-        outputs[output.get("OutputKey")] = output.get("OutputValue")
-    yield outputs
+    yield {
+        output.get("OutputKey"): output.get("OutputValue")
+        for output in response.get("Stacks")[0].get("Outputs")
+    }
 
 
 @pytest.fixture(scope="module")
@@ -31,11 +31,10 @@ def session():
 
 @pytest.fixture(scope="module")
 def bucket(session, cloudformation_outputs):
-    if "BucketName" in cloudformation_outputs:
-        bucket = cloudformation_outputs["BucketName"]
-        session.s3.delete_objects(path=f"s3://{bucket}/")
-    else:
+    if "BucketName" not in cloudformation_outputs:
         raise Exception("You must deploy the test infrastructure using Cloudformation!")
+    bucket = cloudformation_outputs["BucketName"]
+    session.s3.delete_objects(path=f"s3://{bucket}/")
     yield bucket
     session.s3.delete_objects(path=f"s3://{bucket}/")
 
@@ -76,9 +75,13 @@ def logstream(cloudformation_outputs, loggroup):
     client = boto3.client("logs")
     response = client.describe_log_streams(logGroupName=loggroup, logStreamNamePrefix=logstream)
     token = response["logStreams"][0].get("uploadSequenceToken")
-    events = []
-    for i in range(5):
-        events.append({"timestamp": int(1000 * datetime.utcnow().timestamp()), "message": str(i)})
+    events = [
+        {
+            "timestamp": int(1000 * datetime.utcnow().timestamp()),
+            "message": str(i),
+        }
+        for i in range(5)
+    ]
     args = {"logGroupName": loggroup, "logStreamName": logstream, "logEvents": events}
     if token:
         args["sequenceToken"] = token
@@ -100,9 +103,7 @@ def test_read_csv_iterator(session, bucket, sample, row_num):
     boto3.client("s3").upload_file(sample, bucket, sample)
     path = f"s3://{bucket}/{sample}"
     dataframe_iter = session.pandas.read_csv(path=path, max_result_size=200)
-    total_count = 0
-    for dataframe in dataframe_iter:
-        total_count += len(dataframe.index)
+    total_count = sum(len(dataframe.index) for dataframe in dataframe_iter)
     session.s3.delete_objects(path=path)
     assert total_count == row_num
 
@@ -243,10 +244,12 @@ def test_to_s3(
         partition_cols=partition_cols,
         procs_cpu_bound=procs_cpu_bound,
     )
-    num_partitions = (len([keys for keys in dataframe.groupby(partition_cols)]) if partition_cols else 1)
+    num_partitions = (
+        len(list(dataframe.groupby(partition_cols))) if partition_cols else 1
+    )
     assert len(objects_paths) >= num_partitions
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session.pandas.read_sql_athena(sql="select * from test", database=database)
         if factor * len(dataframe.index) == len(dataframe2.index):
             break
@@ -272,7 +275,7 @@ def test_to_parquet_with_cast_int(
                               procs_cpu_bound=1,
                               cast_columns={"value": "int"})
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session.pandas.read_sql_athena(sql="select * from test", database=database)
         if len(dataframe.index) == len(dataframe2.index):
             break
@@ -295,8 +298,7 @@ def test_to_parquet_with_cast_int(
 def test_read_sql_athena_iterator(session, bucket, database, sample, row_num, max_result_size):
     parse_dates = []
     if sample == "data_samples/nano.csv":
-        parse_dates.append("time")
-        parse_dates.append("date")
+        parse_dates.extend(("time", "date"))
     dataframe_sample = pd.read_csv(sample, parse_dates=parse_dates)
     path = f"s3://{bucket}/test/"
     session.pandas.to_parquet(dataframe=dataframe_sample,
@@ -305,7 +307,7 @@ def test_read_sql_athena_iterator(session, bucket, database, sample, row_num, ma
                               preserve_index=False,
                               mode="overwrite")
     total_count = 0
-    for counter in range(10):
+    for _ in range(10):
         dataframe_iter = session.pandas.read_sql_athena(sql="select * from test",
                                                         database=database,
                                                         max_result_size=max_result_size)
@@ -430,7 +432,7 @@ def test_to_parquet_with_kms(
                                     mode="overwrite",
                                     procs_cpu_bound=1)
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session_inner.pandas.read_sql_athena(sql="select * from test", database=database)
         if len(dataframe.index) == len(dataframe2.index):
             break
@@ -521,7 +523,11 @@ def test_to_s3_types(session, bucket, database, file_format, serde, index, parti
     dataframe2 = session.pandas.read_sql_athena(sql="select * from test", database=database)
     for row in dataframe2.itertuples():
 
-        if file_format == "parquet":
+        if file_format == "csv":
+            if serde == "LazySimpleSerDe":
+                assert isinstance(row.my_float, float)
+                assert isinstance(row.my_int, np.int64)
+        elif file_format == "parquet":
             if index:
                 if index == "my_date":
                     assert isinstance(row.new_index, date)
@@ -536,10 +542,6 @@ def test_to_s3_types(session, bucket, database, file_format, serde, index, parti
             assert str(
                 row.my_string
             ) == "foo\nboo\nbar\nFOO\nBOO\nBAR\nxxxxx\nÁÃÀÂÇ\n汉字汉字汉字汉字汉字汉字汉字æøåæøåæøåæøåæøåæøåæøåæøåæøåæøå汉字汉字汉字汉字汉字汉字汉字æøåæøåæøåæøåæøåæøåæøåæøåæøåæøå"
-        elif file_format == "csv":
-            if serde == "LazySimpleSerDe":
-                assert isinstance(row.my_float, float)
-                assert isinstance(row.my_int, np.int64)
         assert str(row.my_timestamp).startswith("2018-01-01 04:03:02.001")
         assert str(row.my_date) == "2019-02-02"
         assert str(row.my_float) == "12345.6789"
@@ -566,7 +568,7 @@ def test_to_csv_with_sep(
                           mode="overwrite",
                           sep="|")
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session.pandas.read_sql_athena(sql="select * from test", database=database)
         if len(dataframe.index) == len(dataframe2.index):
             break
@@ -601,7 +603,7 @@ def test_to_parquet_compressed(session, bucket, database, compression):
                               compression=compression,
                               procs_cpu_bound=1)
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session.pandas.read_sql_athena(sql="select * from test", database=database)
         if len(dataframe.index) == len(dataframe2.index):
             break
@@ -630,7 +632,7 @@ def test_to_parquet_lists(session, bucket, database):
                                       procs_cpu_bound=1)
     assert len(paths) == 1
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session.pandas.read_sql_athena(sql="select id, col_int, col_float, col_list_int from test",
                                                     database=database)
         if len(dataframe.index) == len(dataframe2.index):
@@ -662,7 +664,7 @@ def test_to_parquet_cast(session, bucket, database):
                                       procs_cpu_bound=1)
     assert len(paths) == 1
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session.pandas.read_sql_athena(sql="select id, col_int, col_float, col_list_int from test",
                                                     database=database)
         if len(dataframe.index) == len(dataframe2.index):
@@ -710,7 +712,7 @@ def test_to_parquet_with_cast_null(
                                   "col_null_timestamp": "timestamp",
                               })
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session.pandas.read_sql_athena(sql="select * from test", database=database)
         if len(dataframe.index) == len(dataframe2.index):
             break
@@ -767,7 +769,7 @@ def test_to_parquet_with_normalize(
                               path=f"s3://{bucket}/TestTable-with.dot/",
                               mode="overwrite")
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session.pandas.read_sql_athena(sql="select * from test_table_with_dot", database=database)
         if len(dataframe.index) == len(dataframe2.index):
             break
@@ -807,7 +809,7 @@ def test_to_parquet_with_normalize_and_cast(
                                   "Camel___Case3": "float"
                               })
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session.pandas.read_sql_athena(sql="select * from test_table_with_dot", database=database)
         if len(dataframe.index) == len(dataframe2.index):
             break
@@ -851,7 +853,7 @@ def test_to_parquet_duplicated_columns(
     dataframe.columns = ["a", "a", "c"]
     session.pandas.to_parquet(dataframe=dataframe, database=database, path=f"s3://{bucket}/test/", mode="overwrite")
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session.pandas.read_sql_athena(sql="select * from test", database=database)
         if len(dataframe.index) == len(dataframe2.index):
             break
@@ -896,7 +898,7 @@ def test_to_parquet_casting_to_string(
                               mode="overwrite",
                               cast_columns={"col_string_null": "string"})
     dataframe2 = None
-    for counter in range(10):
+    for _ in range(10):
         dataframe2 = session.pandas.read_sql_athena(sql="select * from test", database=database)
         if len(dataframe.index) == len(dataframe2.index):
             break
@@ -936,7 +938,7 @@ def test_read_sql_athena_with_nulls(session, bucket, database):
                                   "col_bool_null": "boolean"
                               })
     df2 = None
-    for counter in range(10):
+    for _ in range(10):
         df2 = session.pandas.read_sql_athena(sql="select * from test", database=database)
         assert len(list(df.columns)) == len(list(df2.columns))
         if len(df.index) == len(df2.index):

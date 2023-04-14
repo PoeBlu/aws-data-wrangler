@@ -199,19 +199,19 @@ class Spark:
 
     @staticmethod
     def _is_struct(dtype: str) -> bool:
-        return True if dtype.startswith("struct") else False
+        return bool(dtype.startswith("struct"))
 
     @staticmethod
     def _is_array(dtype: str) -> bool:
-        return True if dtype.startswith("array") else False
+        return bool(dtype.startswith("array"))
 
     @staticmethod
     def _is_map(dtype: str) -> bool:
-        return True if dtype.startswith("map") else False
+        return bool(dtype.startswith("map"))
 
     @staticmethod
     def _is_array_or_map(dtype: str) -> bool:
-        return True if (dtype.startswith("array") or dtype.startswith("map")) else False
+        return bool((dtype.startswith("array") or dtype.startswith("map")))
 
     @staticmethod
     def _parse_aux(path: str, aux: str) -> Tuple[str, str]:
@@ -257,8 +257,8 @@ class Spark:
     @staticmethod
     def _flatten_struct_dataframe(df: sql.DataFrame, explode_outer: bool = True,
                                   explode_pos: bool = True) -> List[Tuple[str, str, str]]:
-        explode: str = "EXPLODE_OUTER" if explode_outer is True else "EXPLODE"
-        explode = f"POS{explode}" if explode_pos is True else explode
+        explode: str = "EXPLODE_OUTER" if explode_outer else "EXPLODE"
+        explode = f"POS{explode}" if explode_pos else explode
         cols: List[Tuple[str, str]] = []
         for path, dtype in df.dtypes:
             if Spark._is_struct(dtype=dtype):

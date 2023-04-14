@@ -13,7 +13,7 @@ logging.getLogger("awswrangler").setLevel(logging.DEBUG)
 
 
 def calc_bounders(num, cpus):
-    cpus = num if num < cpus else cpus
+    cpus = min(num, cpus)
     size = int(num / cpus)
     rest = num % cpus
     bounders = []
@@ -46,9 +46,7 @@ def write_fake_objects(bucket, path, num):
         return
     cpus = mp.cpu_count()
     bounders = calc_bounders(num, cpus)
-    args = []
-    for item in bounders:
-        args.append((bucket, path, item[0], item[1]))
+    args = [(bucket, path, item[0], item[1]) for item in bounders]
     pool = mp.Pool(processes=cpus)
     print("Starting parallel writes...")
     pool.map(wrt_fake_objs_batch_wrapper, args)
@@ -57,10 +55,10 @@ def write_fake_objects(bucket, path, num):
 @pytest.fixture(scope="module")
 def cloudformation_outputs():
     response = boto3.client("cloudformation").describe_stacks(StackName="aws-data-wrangler-test-arena")
-    outputs = {}
-    for output in response.get("Stacks")[0].get("Outputs"):
-        outputs[output.get("OutputKey")] = output.get("OutputValue")
-    yield outputs
+    yield {
+        output.get("OutputKey"): output.get("OutputValue")
+        for output in response.get("Stacks")[0].get("Outputs")
+    }
 
 
 @pytest.fixture(scope="module")
@@ -70,11 +68,10 @@ def session():
 
 @pytest.fixture(scope="module")
 def bucket(session, cloudformation_outputs):
-    if "BucketName" in cloudformation_outputs:
-        bucket = cloudformation_outputs.get("BucketName")
-        session.s3.delete_objects(path=f"s3://{bucket}/")
-    else:
+    if "BucketName" not in cloudformation_outputs:
         raise Exception("You must deploy the test infrastructure using SAM!")
+    bucket = cloudformation_outputs.get("BucketName")
+    session.s3.delete_objects(path=f"s3://{bucket}/")
     yield bucket
     session.s3.delete_objects(path=f"s3://{bucket}/")
 
@@ -116,7 +113,7 @@ def test_delete_listed_objects(session, bucket, objects_num):
 
 
 def check_list_with_retry(session, path, length):
-    for counter in range(10):
+    for _ in range(10):
         if len(session.s3.list_objects(path=path)) == length:
             return True
         sleep(1)

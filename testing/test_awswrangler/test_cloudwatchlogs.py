@@ -14,10 +14,10 @@ logging.getLogger("awswrangler").setLevel(logging.DEBUG)
 @pytest.fixture(scope="module")
 def cloudformation_outputs():
     response = boto3.client("cloudformation").describe_stacks(StackName="aws-data-wrangler-test-arena")
-    outputs = {}
-    for output in response.get("Stacks")[0].get("Outputs"):
-        outputs[output.get("OutputKey")] = output.get("OutputValue")
-    yield outputs
+    yield {
+        output.get("OutputKey"): output.get("OutputValue")
+        for output in response.get("Stacks")[0].get("Outputs")
+    }
 
 
 @pytest.fixture(scope="module")
@@ -43,9 +43,13 @@ def logstream(cloudformation_outputs, loggroup):
     client = boto3.client("logs")
     response = client.describe_log_streams(logGroupName=loggroup, logStreamNamePrefix=logstream)
     token = response["logStreams"][0].get("uploadSequenceToken")
-    events = []
-    for i in range(5):
-        events.append({"timestamp": int(1000 * datetime.utcnow().timestamp()), "message": str(i)})
+    events = [
+        {
+            "timestamp": int(1000 * datetime.utcnow().timestamp()),
+            "message": str(i),
+        }
+        for i in range(5)
+    ]
     args = {"logGroupName": loggroup, "logStreamName": logstream, "logEvents": events}
     if token:
         args["sequenceToken"] = token

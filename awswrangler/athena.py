@@ -110,13 +110,10 @@ class Athena:
                   python_types: List[Tuple[str, Optional[type]]]) -> Iterator[Dict[str, Any]]:
         for row in rows:
             vals_varchar: List[Optional[str]] = [x["VarCharValue"] if x else None for x in row["Data"]]
-            data: Dict[str, Any] = {}
-            for (name, ptype), val in zip(python_types, vals_varchar):
-                if ptype is not None:
-                    data[name] = ptype(val)
-                else:
-                    data[name] = None
-            yield data
+            yield {
+                name: ptype(val) if ptype is not None else None
+                for (name, ptype), val in zip(python_types, vals_varchar)
+            }
 
     def get_results(self, query_execution_id: str) -> Iterator[Dict[str, Any]]:
         """
@@ -131,15 +128,13 @@ class Athena:
         python_types: List[Tuple[str, Optional[type]]] = [(n, athena2python(dtype=t)) for n, t in athena_types]
         logger.info(f"python_types: {python_types}")
         rows: List[Dict[str, List[Dict[str, str]]]] = res["ResultSet"]["Rows"][1:]
-        for row in Athena._rows2row(rows=rows, python_types=python_types):
-            yield row
+        yield from Athena._rows2row(rows=rows, python_types=python_types)
         next_token: Optional[str] = res.get("NextToken")
         while next_token is not None:
             logger.info(f"next_token: {next_token}")
             res = self._client_athena.get_query_results(QueryExecutionId=query_execution_id, NextToken=next_token)
             rows = res["ResultSet"]["Rows"]
-            for row in Athena._rows2row(rows=rows, python_types=python_types):
-                yield row
+            yield from Athena._rows2row(rows=rows, python_types=python_types)
             next_token = res.get("NextToken")
 
     def query(self, query: str, database: str, s3_output: str = None,

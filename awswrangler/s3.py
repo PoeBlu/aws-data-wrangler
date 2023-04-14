@@ -33,17 +33,22 @@ def get_fs(session_primitives=None):
         if session_primitives.s3_additional_kwargs:
             s3_additional_kwargs = session_primitives.s3_additional_kwargs
     if profile_name:
-        fs = s3fs.S3FileSystem(profile_name=profile_name,
-                               config_kwargs=config,
-                               s3_additional_kwargs=s3_additional_kwargs)
+        return s3fs.S3FileSystem(
+            profile_name=profile_name,
+            config_kwargs=config,
+            s3_additional_kwargs=s3_additional_kwargs,
+        )
     elif aws_access_key_id and aws_secret_access_key:
-        fs = s3fs.S3FileSystem(key=aws_access_key_id,
-                               secret=aws_secret_access_key,
-                               config_kwargs=config,
-                               s3_additional_kwargs=s3_additional_kwargs)
+        return s3fs.S3FileSystem(
+            key=aws_access_key_id,
+            secret=aws_secret_access_key,
+            config_kwargs=config,
+            s3_additional_kwargs=s3_additional_kwargs,
+        )
     else:
-        fs = s3fs.S3FileSystem(config_kwargs=config, s3_additional_kwargs=s3_additional_kwargs)
-    return fs
+        return s3fs.S3FileSystem(
+            config_kwargs=config, s3_additional_kwargs=s3_additional_kwargs
+        )
 
 
 class S3:
@@ -53,16 +58,10 @@ class S3:
     @staticmethod
     def parse_path(path):
         bucket, path = path.replace("s3://", "").split("/", 1)
-        if not path:
+        if path and len(path) == 1 and path[0] == "/" or not path:
             path = ""
-        elif len(path) == 1:
-            if path[0] != "/":
-                path += "/"
-            else:
-                path = ""
-        else:
-            if path[-1] != "/":
-                path += "/"
+        elif len(path) == 1 or path[-1] != "/":
+            path += "/"
         return bucket, path
 
     @staticmethod
@@ -95,9 +94,9 @@ class S3:
                 if len(procs) == self._session.procs_io_bound:
                     wait_process_release(procs)
             else:
-                logger.debug(f"Starting last delete call...")
+                logger.debug("Starting last delete call...")
                 self.delete_objects_batch(self._session.primitives, bucket, keys)
-        logger.debug(f"Waiting final processes...")
+        logger.debug("Waiting final processes...")
         for proc in procs:
             proc.join()
 
@@ -114,12 +113,12 @@ class S3:
             buckets[bucket_name].append({"Key": path_cleaned.split("/", 1)[1]})
 
         for bucket, batch in buckets.items():
-            procs = []
             logger.debug(f"bucket: {bucket}")
             if procs_io_bound > 1:
                 logger.debug(f"len(batch): {len(batch)}")
                 bounders = calculate_bounders(len(batch), procs_io_bound)
                 logger.debug(f"bounders: {bounders}")
+                procs = []
                 for bounder in bounders:
                     proc = mp.Process(
                         target=self.delete_objects_batch,
@@ -159,7 +158,7 @@ class S3:
             procs.append(proc)
             if len(procs) == self._session.procs_io_bound:
                 wait_process_release(procs)
-        logger.debug(f"Waiting final processes...")
+        logger.debug("Waiting final processes...")
         for proc in procs:
             proc.join()
 
@@ -254,7 +253,7 @@ class S3:
         for i in range(len(procs)):
             logger.debug(f"Waiting pipe number: {i}")
             received = receive_pipes[i].recv()
-            objects_sizes.update(received)
+            objects_sizes |= received
             logger.debug(f"Waiting proc number: {i}")
             procs[i].join()
             logger.debug(f"Closing proc number: {i}")
